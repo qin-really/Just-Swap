@@ -44,9 +44,7 @@ func Run(cfg Config) error {
 	if cfg.Port <= 0 || cfg.Port > 65535 {
 		return fmt.Errorf("invalid port %d", cfg.Port)
 	}
-	if cfg.Alias == "" {
-		cfg.Alias = "JustSwap"
-	}
+
 	// 默认存当前目录下的 data/：随二进制走，不占 C 盘。
 	if cfg.BaseDir == "" {
 		cfg.BaseDir = "data"
@@ -63,12 +61,11 @@ func Run(cfg Config) error {
 	// persisted, so there is no way to tell what a leftover file is. Clearing
 	// it at start is what makes "metadata lives in memory" safe.
 	if err := st.Wipe(); err != nil {
-		log.Printf("startup cleanup of %s: %v", cfg.BaseDir, err)
+		log.Printf("启动清理 %s: %v", cfg.BaseDir, err)
 	}
 
 	c := core.New(core.Config{
 		Version:          cfg.Version,
-		Alias:            cfg.Alias,
 		BaseDir:          cfg.BaseDir,
 		RetentionSeconds: cfg.RetentionSeconds,
 		ClearOnShutdown:  cfg.ClearOnShutdown,
@@ -91,11 +88,11 @@ func Run(cfg Config) error {
 	defer stop()
 	go housekeep(ctx, c, st)
 
-	addr := net.JoinHostPort(cfg.Listen, strconv.Itoa(cfg.Port))
-	ln, err := net.Listen("tcp4", addr)
+	port, ln, err := findAvailablePort(cfg.Listen, cfg.Port)
 	if err != nil {
-		return fmt.Errorf("cannot listen on %s: %w (port in use?)", addr, err)
+		return err
 	}
+	cfg.Port = port
 
 	hs := &http.Server{
 		Handler:           mux,
@@ -112,7 +109,7 @@ func Run(cfg Config) error {
 
 	go func() {
 		<-ctx.Done()
-		log.Println("shutting down")
+		log.Println("正在关闭")
 		shCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		_ = hs.Shutdown(shCtx)
@@ -126,18 +123,39 @@ func Run(cfg Config) error {
 	return err
 }
 
+// findAvailablePort 尝试从 preferred 开始递增查找可用端口,最多尝试 maxTry 次。
+// 返回实际使用的端口和监听器。
+func findAvailablePort(listen string, preferred int) (int, net.Listener, error) {
+	const maxTry = 10
+	for i := 0; i < maxTry; i++ {
+		port := preferred + i
+		addr := net.JoinHostPort(listen, strconv.Itoa(port))
+		ln, err := net.Listen("tcp4", addr)
+		if err == nil {
+			if i > 0 {
+				log.Printf("端口 %d 被占用,改用 %d", preferred, port)
+			}
+			return port, ln, nil
+		}
+		if i == 0 {
+			log.Printf("端口 %d 被占用,尝试 %d..%d", preferred, preferred+1, preferred+maxTry-1)
+		}
+	}
+	return 0, nil, fmt.Errorf("无可用端口: %d-%d", preferred, preferred+maxTry-1)
+}
+
 // cleanupOnExit is the one destructive default in the app, so it is logged
 // either way: what happened, and that the user can opt out.
 func cleanupOnExit(c *core.Core, st *store.Store) {
 	if !c.ClearOnShutdown() {
-		log.Printf("kept files in %s", c.BaseDir())
+		log.Printf("保留文件于 %s", c.BaseDir())
 		return
 	}
 	if err := st.Wipe(); err != nil {
-		log.Printf("clear-on-shutdown failed for %s: %v", c.BaseDir(), err)
+		log.Printf("关闭清空失败 %s: %v", c.BaseDir(), err)
 		return
 	}
-	log.Printf("cleared files from %s (disable with --clear-on-shutdown=false)", c.BaseDir())
+	log.Printf("已清空 %s 的文件(用 --clear-on-shutdown=false 可关闭此行为)", c.BaseDir())
 }
 
 // housekeep drops expired files. It lives here rather than in core because
@@ -153,7 +171,7 @@ func housekeep(ctx context.Context, c *core.Core, st *store.Store) {
 		case <-t.C:
 			for _, name := range c.PurgeExpired() {
 				if err := st.Remove(name); err != nil {
-					log.Printf("remove expired %s: %v", name, err)
+					log.Printf("删除过期文件 %s: %v", name, err)
 				}
 			}
 		}
@@ -193,20 +211,24 @@ func openBrowser(url string) {
 
 func printBanner(cfg Config, url string) {
 	fmt.Println()
-	fmt.Printf("  JustSwap %s - LAN file sharing\n", cfg.Version)
-	fmt.Printf("  %-14s %s\n", "address", url)
-	fmt.Printf("  %-14s %s\n", "alias", cfg.Alias)
-	fmt.Printf("  %-14s %s\n", "files", cfg.BaseDir)
-	fmt.Printf("  %-14s %s\n", "retention", (time.Duration(cfg.RetentionSeconds) * time.Second).Round(time.Second))
+	fmt.Printf("  JustSwap %s - 局域网文件传输\n", cfg.Version)
+	fmt.Printf("  %-10s %s\n", "地址", net.JoinHostPort(displayHost(cfg.Listen), strconv.Itoa(cfg.Port)))
+	fmt.Printf("  %-10s %s\n", "目录", cfg.BaseDir)
+	fmt.Printf("  %-10s %s\n", "保留", (time.Duration(cfg.RetentionSeconds) * time.Second).Round(time.Second))
 	if cfg.ClearOnShutdown {
-		fmt.Printf("  %-14s %s\n", "on shutdown", "clears files")
+		fmt.Printf("  %-10s %s\n", "关闭时", "清空文件")
 	} else {
-		fmt.Printf("  %-14s %s\n", "on shutdown", "keeps files")
+		fmt.Printf("  %-10s %s\n", "关闭时", "保留文件")
 	}
 	fmt.Println()
-	fmt.Println("  No authentication: anyone on the network can upload,")
-	fmt.Println("  browse, download, and delete.")
+	fmt.Println("  使用说明:")
+	fmt.Println("  1. 把上面的地址分享给局域网内其他设备")
+	fmt.Println("  2. 对方在浏览器打开,拖拽文件即可上传")
+	fmt.Println("  3. 文件在保留期后自动删除,或关闭服务器时清空")
 	fmt.Println()
-	fmt.Println("  press Ctrl+C to quit")
+	fmt.Println("  无认证:局域网内任何设备均可上传、浏览、下载、删除。")
+	fmt.Println("  请仅在可信网络环境下使用,不要暴露到公网。")
+	fmt.Println()
+	fmt.Println("  按 Ctrl+C 退出")
 	fmt.Println()
 }
