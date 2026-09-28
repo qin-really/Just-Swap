@@ -1,0 +1,15 @@
+# 编译产物
+*.exe
+*.exe~
+*.test
+*.out
+dist/
+out/
+
+# 运行时数据目录
+data/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+.DS_Store
