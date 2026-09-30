@@ -109,6 +109,12 @@
   .drop .icon svg { width: 29px; height: 29px; }
   .drop .t { margin: 0 0 .3rem; font-size: 1.05rem; font-weight: 640; }
   .drop .s { margin: 0 0 1.15rem; color: var(--ink-2); font-size: .87rem; }
+  .qr { margin: 0 auto 1rem; text-align: center; }
+  .qr svg {
+    width: 136px; height: 136px; padding: 8px; background: #fff;
+    border-radius: var(--r-sm); box-shadow: var(--sh-md);
+  }
+  .qr-toggle { margin: 0 auto 1.1rem; font-size: .82rem; color: var(--ink-2); }
   select, button, a.btn {
     font: inherit; font-size: .87rem; color: var(--ink);
     background-color: var(--surface-2); border: 0; border-radius: var(--r-sm);
@@ -253,6 +259,12 @@
     </div>
     <p class="t">拖拽文件到这里</p>
     <p class="s">局域网内任何浏览器都可以访问</p>
+    <div class="qr" id="qrWrap" hidden></div>
+    <label class="switch qr-toggle">
+      <input type="checkbox" id="qrToggle">
+      <span class="track"><span class="knob"></span></span>
+      <span>显示二维码</span>
+    </label>
     <button class="primary" id="pick">选择文件</button>
     <input type="file" id="file" multiple hidden accept="*/*">
   </section>
@@ -269,6 +281,7 @@
 </div>
 
 <div id="toasts"></div>
+<script src="qrcode.min.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, m =>
@@ -387,11 +400,32 @@ function renderFiles(files) {
   for (const f of files) body.appendChild(fileRow(f));
 }
 
+// QR is rendered in the browser from the address the peer actually opened —
+// location.origin is always the right host and the actual (possibly bumped)
+// port. Shown by default on the server machine, hidden elsewhere; the toggle
+// overrides it and only the first meta sets the default so SSE refreshes never
+// fight the user's choice.
+let qrInit = false;
+function makeQR() {
+  const q = qrcode(0, 'M');
+  q.addData(location.origin);
+  q.make();
+  $('#qrWrap').innerHTML = q.createSvgTag(10, 0);
+}
+function applyQR() {
+  $('#qrWrap').hidden = !$('#qrToggle').checked;
+}
 function renderMeta() {
   if (!meta) return;
   $('#addr').textContent = 'http://' + location.host;
   $('#base').textContent = meta.baseDir || '';
   $('#clearDown').checked = !!meta.clearOnShutdown;
+  if (!qrInit) {
+    makeQR();
+    $('#qrToggle').checked = !!meta.local;
+    qrInit = true;
+    applyQR();
+  }
   const sel = $('#retention');
   const cur = meta.retentionSeconds;
   const opts = RETENTIONS.some(([v]) => v === cur)
@@ -520,10 +554,6 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#file').onchange = e => { uploadMany([...e.target.files]); e.target.value = ''; };
 
   const drop = $('#drop');
-  drop.onclick = e => {
-    if (e.target.closest('#pick') || e.target.closest('.row')) return;
-    $('#file').click();
-  };
   for (const ev of ['dragenter', 'dragover']) {
     document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); });
   }
@@ -538,6 +568,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#retention').onchange = e => saveSettings({retentionSeconds: +e.target.value});
   $('#clearDown').onchange = e => saveSettings({clearOnShutdown: e.target.checked});
+  $('#qrToggle').onchange = applyQR;
   $('#clearAll').onclick = clearAll;
 });
 </script>

@@ -13,3 +13,9 @@ data/
 .vscode/
 .idea/
 .DS_Store
+
+# claude文档
+docs/
+CLAUDE.md
+
+.ico

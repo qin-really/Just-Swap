@@ -5,6 +5,7 @@ package server
 
 import (
 	"embed"
+	"net"
 	"net/http"
 
 	"justswap/internal/core"
@@ -16,12 +17,20 @@ import (
 const MaxBodyBytes = 4 << 20
 
 type Srv struct {
-	c  *core.Core
-	st *store.Store
+	c        *core.Core
+	st       *store.Store
+	localIPs []net.IP // this machine's interface addresses, for same-machine checks
 }
 
 func New(c *core.Core, st *store.Store) *Srv {
 	return &Srv{c: c, st: st}
+}
+
+// SetLocalIPs records the machine's interface addresses. Used by /api/meta's
+// `local` field so the UI can default the QR code to visible only on the
+// device running the server. Fixed at startup.
+func (s *Srv) SetLocalIPs(ips []net.IP) {
+	s.localIPs = ips
 }
 
 // Register wires the full route table onto mux.

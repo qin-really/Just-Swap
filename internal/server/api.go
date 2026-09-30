@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -33,8 +34,41 @@ func decode(r *http.Request, v any) error {
 	return json.NewDecoder(io.LimitReader(r.Body, MaxBodyBytes)).Decode(v)
 }
 
+// metaView adds one server-side fact the UI needs and core must not know: is
+// the requester on the same machine as the server? It decides whether the QR
+// code is shown by default.
+type metaView struct {
+	core.Meta
+	Local bool `json:"local"`
+}
+
 func (s *Srv) meta(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.c.Meta())
+	writeJSON(w, http.StatusOK, metaView{
+		Meta:  s.c.Meta(),
+		Local: s.isLocal(r),
+	})
+}
+
+// isLocal reports whether the request comes from the machine running the
+// server: loopback, or any of the interface addresses discovered at startup.
+func (s *Srv) isLocal(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, l := range s.localIPs {
+		if ip.Equal(l) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Srv) list(w http.ResponseWriter, r *http.Request) {

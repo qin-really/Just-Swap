@@ -10,6 +10,7 @@
 - **浏览**:文件列表,按上传时间倒序,显示剩余保留时间
 - **下载**:支持断点续传(Range / 206 / Content-Range)
 - **设置**:网页端可调保留时长(1 分钟 ~ 7 天)、关闭时是否清空文件
+- **手机扫码直达**:页面内置二维码,内容为当前访问地址;部署机默认显示,其他设备用开关调出
 - **即用即走**:文件默认在保留期后自动删除,关闭服务器时清空(可关)
 
 ## 构建
@@ -18,7 +19,7 @@
 go build -o justswap .
 ```
 
-需要 Go 1.22+。编译产物为单二进制,无外部依赖。
+需要 Go 1.22+。零外部 Go 依赖;页面二维码由内嵌的 `qrcode.min.js` 在浏览器本地生成,`go build` 直接产出单二进制。
 
 ## 使用
 
@@ -63,7 +64,7 @@ justswap -retention 86400 -clear-on-shutdown=false
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/meta` | 服务器信息(版本、别名、设置) |
+| GET | `/api/meta` | 服务器信息(版本、别名、设置、`local` 是否本机) |
 | GET | `/api/files` | 文件列表(按上传时间倒序) |
 | POST | `/api/upload?name=` | 上传文件(name URL 编码) |
 | GET | `/api/download?name=` | 下载文件(支持 Range) |
@@ -122,4 +123,4 @@ go vet ./...      # 无输出 = 通过
 go build -o js.exe .
 ```
 
-建议补上的集成测试(用 `httptest` 起真路由):上传→列表→下载校验内容一致、Range 206、删除与清空、TTL 过期清理、设置 PATCH 持久化、SSE 推送、路径穿越与 Windows 盘符文件名一律 400。
+建议补上的集成测试(用 `httptest` 起真路由):上传→列表→下载校验内容一致、Range 206、删除与清空、TTL 过期清理、设置 PATCH 持久化、SSE 推送、`/api/meta` 的 `local` 判定(本机 loopback 为 true)、路径穿越与 Windows 盘符文件名一律 400。

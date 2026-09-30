@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -81,8 +82,11 @@ func Run(cfg Config) error {
 		})
 	}
 
+	srv := server.New(c, st)
+	srv.SetLocalIPs(localIPs())
+
 	mux := http.NewServeMux()
-	server.New(c, st).Register(mux, webui.FS)
+	srv.Register(mux, webui.FS)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -178,6 +182,32 @@ func housekeep(ctx context.Context, c *core.Core, st *store.Store) {
 	}
 }
 
+// localIPs returns the machine's usable unicast addresses: every interface
+// address except loopback, link-local, multicast, and unspecified. Work loops
+// (172.16/12, 10/8, VIPs) count — they are still addresses of this machine.
+func localIPs() []net.IP {
+	var out []net.IP
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return out
+	}
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() ||
+			ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+			continue
+		}
+		out = append(out, ip)
+	}
+	return out
+}
+
 // displayHost picks the address a peer machine would need to reach us. Dialing
 // UDP sends no packets, so this works on an air-gapped LAN.
 func displayHost(listen string) string {
@@ -209,12 +239,22 @@ func openBrowser(url string) {
 	_ = cmd.Start()
 }
 
+// absDir renders BaseDir as a full path so the banner shows where files land,
+// regardless of whether the path came in relative (--download-dir) or from the
+// saved settings. Falls back to the raw value if the CWD can't be resolved.
+func absDir(dir string) string {
+	if p, err := filepath.Abs(dir); err == nil {
+		return p
+	}
+	return dir
+}
+
 func printBanner(cfg Config, url string) {
 	fmt.Println()
 	fmt.Printf("  JustSwap %s - 局域网文件传输\n", cfg.Version)
 	fmt.Printf("  %-10s %s\n", "地址", net.JoinHostPort(displayHost(cfg.Listen), strconv.Itoa(cfg.Port)))
-	fmt.Printf("  %-10s %s\n", "目录", cfg.BaseDir)
-	fmt.Printf("  %-10s %s\n", "保留", (time.Duration(cfg.RetentionSeconds) * time.Second).Round(time.Second))
+	fmt.Printf("  %-10s %s\n", "保存目录", absDir(cfg.BaseDir))
+	fmt.Printf("  %-10s %s\n", "保留时长", (time.Duration(cfg.RetentionSeconds) * time.Second).Round(time.Second))
 	if cfg.ClearOnShutdown {
 		fmt.Printf("  %-10s %s\n", "关闭时", "清空文件")
 	} else {
